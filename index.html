@@ -519,6 +519,29 @@ body {
       <div class="filter-chip" onclick="setCalFilter('NAS_orb',this)">🇺🇸 NAS ORB</div>
       <div class="filter-chip" onclick="setCalFilter('DOW_standard',this)">🇺🇸 DOW</div>
     </div>
+    <!-- Exclusion filters -->
+    <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:12px;margin-bottom:10px">
+      <div style="font-family:'Space Mono',monospace;font-size:0.6rem;color:var(--muted2);letter-spacing:0.08em;text-transform:uppercase;margin-bottom:10px">⚙️ AUSSCHLUSS-FILTER</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+        <div class="fgroup">
+          <label>SL Min ausschließen (Pkt)</label>
+          <input type="number" id="cal-excl-sl-min" placeholder="z.B. 0" min="0" step="1" oninput="renderCalendar()">
+        </div>
+        <div class="fgroup">
+          <label>SL Max ausschließen (Pkt)</label>
+          <input type="number" id="cal-excl-sl-max" placeholder="z.B. 999" min="0" step="1" oninput="renderCalendar()">
+        </div>
+        <div class="fgroup">
+          <label>Von Uhrzeit ausschließen</label>
+          <input type="time" id="cal-excl-from" oninput="renderCalendar()">
+        </div>
+        <div class="fgroup">
+          <label>Bis Uhrzeit ausschließen</label>
+          <input type="time" id="cal-excl-to" oninput="renderCalendar()">
+        </div>
+      </div>
+      <button onclick="clearCalExcl()" style="margin-top:8px;font-size:0.65rem;padding:4px 10px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--muted2);cursor:pointer;font-family:'Space Mono',monospace">✕ Filter zurücksetzen</button>
+    </div>
     <!-- Calendar month nav -->
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
       <button onclick="changeCalMonth(-1)" style="background:var(--bg);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:1.1rem;width:36px;height:36px;cursor:pointer">‹</button>
@@ -2979,6 +3002,14 @@ let calMonth = null; // null = current month
 let dashView = 'overview';
 let calFilter = 'all';
 
+function clearCalExcl() {
+  document.getElementById('cal-excl-sl-min').value = '';
+  document.getElementById('cal-excl-sl-max').value = '';
+  document.getElementById('cal-excl-from').value   = '';
+  document.getElementById('cal-excl-to').value     = '';
+  renderCalendar();
+}
+
 function setCalFilter(f, btn) {
   calFilter = f;
   document.querySelectorAll('#cal-filter-row .filter-chip').forEach(c => c.classList.remove('active'));
@@ -3038,6 +3069,27 @@ function renderCalendar() {
         return tInst === inst && (!strat || tStrat === strat);
       });
     }
+  }
+
+  // Ausschluss-Filter
+  const exSlMin = parseFloat(document.getElementById('cal-excl-sl-min')?.value) || 0;
+  const exSlMax = parseFloat(document.getElementById('cal-excl-sl-max')?.value) || 99999;
+  const exFrom  = document.getElementById('cal-excl-from')?.value || '';
+  const exTo    = document.getElementById('cal-excl-to')?.value   || '';
+
+  const hasExcl = exSlMin > 0 || exSlMax < 99999 || exFrom || exTo;
+
+  if (hasExcl) {
+    filteredTrades = filteredTrades.filter(t => {
+      const sl = t.slPts || 0;
+      if (exSlMin > 0 && sl < exSlMin) return false;
+      if (exSlMax < 99999 && sl > exSlMax) return false;
+      if (exFrom && exTo && t.time) {
+        if (t.time >= exFrom && t.time <= exTo) return false;
+      } else if (exFrom && t.time && t.time >= exFrom) return false;
+      else if (exTo && t.time && t.time <= exTo) return false;
+      return true;
+    });
   }
 
   // Build daily P&L map for this month
