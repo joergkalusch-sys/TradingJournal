@@ -4165,55 +4165,144 @@ function calcRatioSim() {
   }
   if (simTrades.length === 0) { el.innerHTML = '<div style="color:var(--muted2)">Keine Trades.</div>'; return; }
 
-  const w1=tp1/100, w2=tp2/100, w3=tp3/100;
-  let newTotalPts=0, newTotalEur=0, oldTotalPts=0, oldTotalEur=0;
+  // Sort chronologically
+  const sorted = simTrades.slice().sort((a,b) => ((a.date||'')+'T'+(a.time||'00:00')).localeCompare((b.date||'')+'T'+(b.time||'00:00')));
 
-  simTrades.forEach(t => {
+  const w1=tp1/100, w2=tp2/100, w3=tp3/100;
+
+  // Compute per-trade old and new values
+  let oldTotalPts=0, newTotalPts=0;
+  let oldTotalEur=0, newTotalEur=0;
+  let oldWins=0, newWins=0;
+  let oldRSum=0, newRSum=0;
+  const oldEqCurve=[], newEqCurve=[];
+  let oldCum=0, newCum=0;
+
+  sorted.forEach(t => {
     const sl      = t.slPts || 0;
     const origCfd = t.cfd || 2;
     const useCfd  = simCFD || origCfd;
+
+    // New pts with simulated ratio
     let newPts = 0;
+    let newR   = 0;
     switch(t.exitType) {
-      case 'SL':  newPts = -sl; break;
-      case 'TP1': newPts = sl*(w1*1+(w2+w3)*0); break;
-      case 'TP2': newPts = sl*(w1*1+w2*2+w3*0); break;
-      case 'TP3': newPts = sl*(w1*1+w2*2+w3*3); break;
-      case 'BE':  newPts = 0; break;
-      default:    newPts = t.pts; break;
+      case 'SL':  newPts=-sl;                        newR=-1; break;
+      case 'TP1': newPts=sl*(w1+(w2+w3)*0);          newR=newPts/sl; break;
+      case 'TP2': newPts=sl*(w1+w2*2+w3*0);          newR=newPts/sl; break;
+      case 'TP3': newPts=sl*(w1+w2*2+w3*3);          newR=newPts/sl; break;
+      case 'BE':  newPts=0; newR=0; break;
+      default:    newPts=t.pts; newR=t.rMult||0; break;
     }
-    newTotalPts += newPts;
-    newTotalEur += newPts * useCfd;
+
     oldTotalPts += t.pts;
+    newTotalPts += newPts;
     oldTotalEur += t.eur;
+    newTotalEur += newPts * useCfd;
+    if (t.pts > 0)   oldWins++;
+    if (newPts > 0)  newWins++;
+    oldRSum += t.rMult||0;
+    newRSum += newR;
+
+    oldCum += t.pts; oldEqCurve.push(oldCum);
+    newCum += newPts; newEqCurve.push(newCum);
   });
 
-  const diffPts  = newTotalPts - oldTotalPts;
-  const diffEur  = newTotalEur - oldTotalEur;
-  const color    = diffEur >= 0 ? 'var(--accent)' : 'var(--red)';
-  const cfdLabel = simCFD ? `${simCFD} CFD` : 'Original CFD';
+  const n = sorted.length;
+  const oldTQ   = (oldWins/n*100).toFixed(1);
+  const newTQ   = (newWins/n*100).toFixed(1);
+  const oldAvgR = (oldRSum/n).toFixed(3);
+  const newAvgR = (newRSum/n).toFixed(3);
+  const diffPts = newTotalPts - oldTotalPts;
+  const diffEur = newTotalEur - oldTotalEur;
+  const cfdLabel = simCFD ? `${simCFD} CFD` : 'Orig. CFD';
+  const posColor = v => parseFloat(v) >= 0 ? 'var(--accent)' : 'var(--red)';
+
+  // Mini equity curve canvas
+  const canvasId = 'ratio-sim-eq-canvas';
 
   el.innerHTML = `
-    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:8px">
-      <div style="background:var(--bg);border-radius:8px;padding:10px;text-align:center">
-        <div style="font-size:0.55rem;color:var(--muted2);margin-bottom:3px">AKTUELL<br>${partialConfig.tp1}/${partialConfig.tp2}/${partialConfig.tp3}</div>
-        <div style="font-family:'Space Mono',monospace;font-size:0.85rem;font-weight:700;color:var(--blue)">${oldTotalPts>=0?'+':''}${oldTotalPts.toFixed(0)} Pkt</div>
-        <div style="font-size:0.6rem;color:var(--muted2)">${oldTotalEur>=0?'+':''}${oldTotalEur.toFixed(0)}€</div>
+    <!-- Vergleich Kacheln -->
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin-bottom:10px">
+      <div style="background:var(--bg);border-radius:8px;padding:8px;text-align:center;border:1px solid var(--border)">
+        <div style="font-size:0.52rem;color:var(--muted2);margin-bottom:4px;font-family:'Space Mono',monospace">AKTUELL<br>${partialConfig.tp1}/${partialConfig.tp2}/${partialConfig.tp3}</div>
+        <div style="font-family:'Space Mono',monospace;font-size:0.85rem;font-weight:700;color:${posColor(oldTotalPts)}">${oldTotalPts>=0?'+':''}${oldTotalPts.toFixed(0)} Pkt</div>
+        <div style="font-size:0.6rem;color:${posColor(oldTotalEur)}">${oldTotalEur>=0?'+':''}${oldTotalEur.toFixed(0)}€</div>
       </div>
-      <div style="background:var(--bg);border-radius:8px;padding:10px;text-align:center">
-        <div style="font-size:0.55rem;color:var(--muted2);margin-bottom:3px">SIMULIERT<br>${tp1}/${tp2}/${tp3} · ${cfdLabel}</div>
-        <div style="font-family:'Space Mono',monospace;font-size:0.85rem;font-weight:700;color:${color}">${newTotalPts>=0?'+':''}${newTotalPts.toFixed(0)} Pkt</div>
-        <div style="font-size:0.6rem;color:${color}">${newTotalEur>=0?'+':''}${newTotalEur.toFixed(0)}€</div>
+      <div style="background:var(--bg);border-radius:8px;padding:8px;text-align:center;border:1px solid rgba(200,245,90,0.3)">
+        <div style="font-size:0.52rem;color:var(--muted2);margin-bottom:4px;font-family:'Space Mono',monospace">SIMULIERT<br>${tp1}/${tp2}/${tp3} · ${cfdLabel}</div>
+        <div style="font-family:'Space Mono',monospace;font-size:0.85rem;font-weight:700;color:${posColor(newTotalPts)}">${newTotalPts>=0?'+':''}${newTotalPts.toFixed(0)} Pkt</div>
+        <div style="font-size:0.6rem;color:${posColor(newTotalEur)}">${newTotalEur>=0?'+':''}${newTotalEur.toFixed(0)}€</div>
       </div>
-      <div style="background:var(--bg);border-radius:8px;padding:10px;text-align:center">
-        <div style="font-size:0.55rem;color:var(--muted2);margin-bottom:3px">UNTERSCHIED</div>
-        <div style="font-family:'Space Mono',monospace;font-size:0.85rem;font-weight:700;color:${color}">${diffPts>=0?'+':''}${diffPts.toFixed(0)} Pkt</div>
-        <div style="font-size:0.6rem;color:${color}">${diffEur>=0?'+':''}${diffEur.toFixed(0)}€</div>
+      <div style="background:var(--bg);border-radius:8px;padding:8px;text-align:center;border:1px solid var(--border)">
+        <div style="font-size:0.52rem;color:var(--muted2);margin-bottom:4px;font-family:'Space Mono',monospace">UNTERSCHIED</div>
+        <div style="font-family:'Space Mono',monospace;font-size:0.85rem;font-weight:700;color:${posColor(diffPts)}">${diffPts>=0?'+':''}${diffPts.toFixed(0)} Pkt</div>
+        <div style="font-size:0.6rem;color:${posColor(diffEur)}">${diffEur>=0?'+':''}${diffEur.toFixed(0)}€</div>
       </div>
     </div>
-    <div style="font-size:0.63rem;color:var(--muted2);font-family:'Space Mono',monospace;text-align:center">
-      ${simTrades.length} Trades · TP1=+${w1.toFixed(2)}R · TP2=+${(w1+w2*2).toFixed(2)}R · TP3=+${(w1+w2*2+w3*3).toFixed(2)}R
+
+    <!-- Detail Vergleich -->
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:10px">
+      <div style="background:var(--bg);border-radius:8px;padding:8px;border:1px solid var(--border)">
+        <div style="font-size:0.55rem;color:var(--muted2);margin-bottom:6px;font-family:'Space Mono',monospace">AKTUELL</div>
+        <div style="display:flex;justify-content:space-between;margin-bottom:3px"><span style="font-size:0.62rem;color:var(--muted2)">TQ</span><span style="font-family:'Space Mono',monospace;font-size:0.72rem;color:${parseFloat(oldTQ)>=60?'var(--accent)':'var(--red)'}">${oldTQ}%</span></div>
+        <div style="display:flex;justify-content:space-between;margin-bottom:3px"><span style="font-size:0.62rem;color:var(--muted2)">Ø R-Multiple</span><span style="font-family:'Space Mono',monospace;font-size:0.72rem;color:${posColor(oldAvgR)}">${parseFloat(oldAvgR)>=0?'+':''}${oldAvgR}R</span></div>
+        <div style="display:flex;justify-content:space-between"><span style="font-size:0.62rem;color:var(--muted2)">TP1/TP2/TP3 Wert</span><span style="font-family:'Space Mono',monospace;font-size:0.62rem;color:var(--muted2)">${partialConfig.tp1/100}/${(partialConfig.tp1/100+partialConfig.tp2/100*2).toFixed(2)}/${(partialConfig.tp1/100+partialConfig.tp2/100*2+partialConfig.tp3/100*3).toFixed(2)}R</span></div>
+      </div>
+      <div style="background:var(--bg);border-radius:8px;padding:8px;border:1px solid rgba(200,245,90,0.3)">
+        <div style="font-size:0.55rem;color:var(--accent);margin-bottom:6px;font-family:'Space Mono',monospace">SIMULIERT</div>
+        <div style="display:flex;justify-content:space-between;margin-bottom:3px"><span style="font-size:0.62rem;color:var(--muted2)">TQ</span><span style="font-family:'Space Mono',monospace;font-size:0.72rem;color:${parseFloat(newTQ)>=60?'var(--accent)':'var(--red)'}">${newTQ}%</span></div>
+        <div style="display:flex;justify-content:space-between;margin-bottom:3px"><span style="font-size:0.62rem;color:var(--muted2)">Ø R-Multiple</span><span style="font-family:'Space Mono',monospace;font-size:0.72rem;color:${posColor(newAvgR)}">${parseFloat(newAvgR)>=0?'+':''}${newAvgR}R</span></div>
+        <div style="display:flex;justify-content:space-between"><span style="font-size:0.62rem;color:var(--muted2)">TP1/TP2/TP3 Wert</span><span style="font-family:'Space Mono',monospace;font-size:0.62rem;color:var(--accent)">${w1.toFixed(2)}/${(w1+w2*2).toFixed(2)}/${(w1+w2*2+w3*3).toFixed(2)}R</span></div>
+      </div>
     </div>
+
+    <!-- Equity Kurven Vergleich -->
+    <div style="font-size:0.6rem;color:var(--muted2);font-family:'Space Mono',monospace;margin-bottom:6px">
+      📈 Equity-Kurven Vergleich — <span style="color:var(--blue)">■ Aktuell</span> vs <span style="color:var(--accent)">■ Simuliert</span>
+    </div>
+    <canvas id="${canvasId}" height="120" style="width:100%;border-radius:8px"></canvas>
   `;
+
+  // Draw equity curves
+  requestAnimationFrame(() => {
+    const canvas = document.getElementById(canvasId);
+    if (!canvas) return;
+    canvas.width = canvas.offsetWidth || 300;
+    const ctx = canvas.getContext('2d');
+    const W = canvas.width, H = 120, pad = 8;
+    ctx.fillStyle = '#0a0c0f';
+    ctx.fillRect(0,0,W,H);
+
+    const allVals = [...oldEqCurve, ...newEqCurve, 0];
+    const minV = Math.min(...allVals);
+    const maxV = Math.max(...allVals);
+    const range = maxV - minV || 1;
+
+    const toY = v => pad + (H-pad*2) * (1 - (v-minV)/range);
+    const toX = (i, arr) => pad + (W-pad*2) * i/(arr.length-1||1);
+
+    // Zero line
+    const zy = toY(0);
+    ctx.strokeStyle = 'rgba(255,255,255,0.15)';
+    ctx.setLineDash([3,3]);
+    ctx.beginPath(); ctx.moveTo(pad,zy); ctx.lineTo(W-pad,zy); ctx.stroke();
+    ctx.setLineDash([]);
+
+    // Draw old curve (blue)
+    ctx.strokeStyle = '#4da6ff';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    oldEqCurve.forEach((v,i) => { const x=toX(i,oldEqCurve),y=toY(v); i===0?ctx.moveTo(x,y):ctx.lineTo(x,y); });
+    ctx.stroke();
+
+    // Draw new curve (accent/green)
+    ctx.strokeStyle = '#c8f55a';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    newEqCurve.forEach((v,i) => { const x=toX(i,newEqCurve),y=toY(v); i===0?ctx.moveTo(x,y):ctx.lineTo(x,y); });
+    ctx.stroke();
+  });
 }
 
 // ── WEEKLY GOAL ───────────────────────────────────────────────
