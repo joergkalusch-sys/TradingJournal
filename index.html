@@ -834,6 +834,27 @@ body {
   </div>
 
   <div class="export-card">
+    <div class="export-title">📊 ROHDATEN IMPORTIEREN</div>
+    <div class="export-desc">Importiere historische Trades mit nur den Kerndaten. Das Journal berechnet EUR, CFD und R-Multiple automatisch anhand der gewählten Strategie.</div>
+    <div style="background:var(--bg);border-radius:10px;padding:12px;margin-bottom:14px;font-family:'Space Mono',monospace;font-size:0.68rem;color:var(--muted2);line-height:2">
+      Minimales Format:<br>
+      <span style="color:var(--accent)">[{"date":"2026-04-01","time":"09:15","instrument":"DAX",<br>"direction":"long","slPts":50,"exitType":"TP3"}]</span><br>
+      <span style="color:var(--muted2)">entry optional · time optional · instrument optional (default DAX)</span>
+    </div>
+    <div class="fgroup" style="margin-bottom:12px">
+      <label>Strategie für Import</label>
+      <div class="seg" id="raw-import-strat-seg">
+        <button class="seg-btn active" onclick="setRawImportStrat('standard',this)">Algo</button>
+        <button class="seg-btn" onclick="setRawImportStrat('orb',this)">ORB</button>
+        <button class="seg-btn" onclick="setRawImportStrat('split5',this)">5-Split</button>
+      </div>
+    </div>
+    <button class="export-btn primary" onclick="document.getElementById('raw-import-input').click()">📥 ROHDATEN IMPORTIEREN</button>
+    <input type="file" id="raw-import-input" accept=".json,.txt" style="display:none" onchange="importRawTrades(event)">
+    <div id="raw-import-status" style="font-family:'Space Mono',monospace;font-size:0.68rem;color:var(--muted2);text-align:center;margin-top:8px;display:none"></div>
+  </div>
+
+  <div class="export-card">
     <div class="export-title">🔧 Trades bearbeiten</div>
     <div class="export-desc">Instrument für Trades in einem Zeitraum ändern.</div>
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px">
@@ -2866,6 +2887,98 @@ function copyBackup() {
     });
 }
 
+let rawImportStrat = 'standard';
+
+function setRawImportStrat(strat, btn) {
+  rawImportStrat = strat;
+  document.querySelectorAll('#raw-import-strat-seg .seg-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+}
+
+function calcRawTrade(t) {
+  // t has: date, time, instrument, direction, slPts, exitType, entry (optional)
+  const slPts  = parseFloat(t.slPts) || 0;
+  const dir    = (t.direction || 'long') === 'long' ? 1 : -1;
+  const entry  = parseFloat(t.entry) || 0;
+  const strat  = rawImportStrat;
+  const exit   = t.exitType || 'SL';
+
+  // Calculate levels if entry given
+  const sl  = entry ? entry - dir * slPts : 0;
+  let tp1, tp2, tp3, tp4, tp5;
+  if (strat === 'split5') {
+    tp1 = entry ? entry + dir * slPts * 0.5 : 0;
+    tp2 = entry ? entry + dir * slPts * 1.0 : 0;
+    tp3 = entry ? entry + dir * slPts * 2.0 : 0;
+    tp4 = entry ? entry + dir * slPts * 3.0 : 0;
+    tp5 = entry ? entry + dir * slPts * 4.0 : 0;
+  } else {
+    tp1 = entry ? entry + dir * slPts * 1 : 0;
+    tp2 = entry ? entry + dir * slPts * 2 : 0;
+    tp3 = entry ? entry + dir * slPts * 3 : 0;
+    tp4 = entry ? entry + dir * slPts * 4 : 0;
+    tp5 = entry ? entry + dir * slPts * 5 : 0;
+  }
+
+  // Calculate rMult and eur
+  let rMult = 0, pts = 0, eur = 0, cfd = 2;
+
+  if (strat === 'split5') {
+    cfd   = slPts > 0 ? Math.max(0.01, splitRisk / slPts) : 2;
+    rMult = calcSplit5RMult(exit, splitWeights);
+    pts   = slPts * rMult;
+    eur   = rMult * splitRisk;
+  } else if (strat === 'orb') {
+    cfd = 2;
+    const ORB_TP1 = 20, ORB_TP2 = 60;
+    switch(exit) {
+      case 'SL':  pts=-slPts; rMult=-1; break;
+      case 'TP1': pts=0.40*ORB_TP1; rMult=pts/slPts; break;
+      case 'TP2': pts=0.40*ORB_TP1+0.60*ORB_TP2; rMult=pts/slPts; break;
+      case 'BE':  pts=0; rMult=0; break;
+      default:    pts=ORB_TP1; rMult=ORB_TP1/slPts; break;
+    }
+    eur = pts * cfd;
+  } else {
+    // standard algo
+    cfd = 2;
+    const w1=partialConfig.tp1/100, w2=partialConfig.tp2/100, w3=partialConfig.tp3/100;
+    switch(exit) {
+      case 'SL':  pts=-slPts; rMult=-1; break;
+      case 'TP1': pts=slPts*(w1); rMult=pts/slPts; break;
+      case 'TP2': pts=slPts*(w1+w2*2); rMult=pts/slPts; break;
+      case 'TP3': pts=slPts*(w1+w2*2+w3*3); rMult=pts/slPts; break;
+      case 'BE':  pts=0; rMult=0; break;
+      default:    pts=slPts; rMult=1; break;
+    }
+    eur = pts * cfd;
+  }
+
+  return {
+    id:         Date.now() + Math.random()*1000|0,
+    date:       t.date || '',
+    time:       t.time || '00:00',
+    instrument: t.instrument || 'DAX',
+    strategy:   strat,
+    direction:  t.direction || 'long',
+    exitType:   exit,
+    cfd:        parseFloat(cfd.toFixed(2)),
+    entry:      entry || 0,
+    sl:         parseFloat(sl.toFixed(2)),
+    tp1:        parseFloat(tp1.toFixed(2)),
+    tp2:        parseFloat(tp2.toFixed(2)),
+    tp3:        parseFloat(tp3.toFixed(2)),
+    tp4:        parseFloat(tp4.toFixed(2)),
+    tp5:        parseFloat(tp5.toFixed(2)),
+    slPts:      parseFloat(slPts.toFixed(1)),
+    pts:        parseFloat(pts.toFixed(1)),
+    rMult:      parseFloat(rMult.toFixed(3)),
+    eur:        parseFloat(eur.toFixed(2)),
+    win:        pts > 0,
+    note:       t.note || '',
+  };
+}
+
 function importJSON(event) {
   const file = event.target.files[0];
   if (!file) return;
@@ -2873,12 +2986,11 @@ function importJSON(event) {
   reader.onload = e => {
     try {
       const parsed = JSON.parse(e.target.result);
-      // Handle new format (with version wrapper) or old format (plain array)
       let imported;
       if (Array.isArray(parsed)) {
-        imported = parsed; // old format
+        imported = parsed;
       } else if (parsed.trades && Array.isArray(parsed.trades)) {
-        imported = parsed.trades; // new format
+        imported = parsed.trades;
         if (parsed.partialConfig) {
           partialConfig = parsed.partialConfig;
           localStorage.setItem('tradelog_partial', JSON.stringify(partialConfig));
@@ -2886,7 +2998,6 @@ function importJSON(event) {
       } else {
         throw new Error('Ungültiges Format');
       }
-      // Merge: avoid duplicates by id
       const existingIds = new Set(trades.map(t => t.id));
       const newTrades = imported.filter(t => !existingIds.has(t.id));
       trades = [...newTrades, ...trades];
@@ -2895,6 +3006,42 @@ function importJSON(event) {
     } catch(err) { showToast('⚠ Ungültige Datei: ' + err.message); }
   };
   reader.readAsText(file);
+}
+
+function importRawTrades(event) {
+  const file = event.target.files[0];
+  if (!file) return;
+  const status = document.getElementById('raw-import-status');
+  status.style.display = 'block';
+  status.textContent = 'Lese Datei...';
+  const reader = new FileReader();
+  reader.onload = e => {
+    try {
+      let raw = JSON.parse(e.target.result);
+      if (!Array.isArray(raw)) throw new Error('Datei muss ein Array sein []');
+
+      const newTrades = raw.map(t => calcRawTrade(t));
+      const existingIds = new Set(trades.map(t => t.id));
+      const toAdd = newTrades.filter(t => !existingIds.has(t.id));
+
+      trades = [...toAdd, ...trades];
+      save();
+      renderList();
+      renderDashboard();
+      updateStats();
+      updateExport();
+
+      const stratLabel = rawImportStrat === 'split5' ? '5-Split' : rawImportStrat === 'orb' ? 'ORB' : 'Algo';
+      status.style.color = 'var(--accent)';
+      status.textContent = `✓ ${toAdd.length} Trades importiert als ${stratLabel}`;
+      showToast(`✓ ${toAdd.length} Rohdaten importiert`);
+    } catch(err) {
+      status.style.color = 'var(--red)';
+      status.textContent = '⚠ Fehler: ' + err.message;
+    }
+  };
+  reader.readAsText(file);
+  event.target.value = '';
 }
 
 function bulkFixInstrument() {
